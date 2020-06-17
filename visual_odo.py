@@ -6,9 +6,9 @@ STAGE_SECOND_FRAME = 1
 STAGE_DEFAULT_FRAME = 2
 kMinNumFeature = 1500
 
-lk_params = dict(winSize=(21, 21),
-                 #maxLevel = 3,
-                 criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+lk_params = dict(winSize=(15, 15),
+                 maxLevel = 2,
+                 criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
 def featureTracking(image_ref, image_cur, px_ref):
     kp2, st, err = cv2.calcOpticalFlowPyrLK(
@@ -48,7 +48,7 @@ class VisualOdometry:
         self.pp = (cam.cx, cam.cy)
         #self.trueX, self.trueY, self.trueZ = 0, 0, 0
         self.detector = cv2.FastFeatureDetector_create(
-            threshold=0, nonmaxSuppression=True)
+            threshold=10, nonmaxSuppression=True)
         # with open('poses.txt') as f:
         #	self.annotations = f.readlines()
 
@@ -74,7 +74,7 @@ class VisualOdometry:
         self.px_ref, self.px_cur = featureTracking(
             self.last_frame, self.new_frame, self.px_ref)
         E, mask = cv2.findEssentialMat(
-            self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+            self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=10.0)
         _, self.cur_R, self.cur_t, mask = cv2.recoverPose(
             E, self.px_cur, self.px_ref, focal=self.focal, pp=self.pp)
         self.frame_stage = STAGE_DEFAULT_FRAME
@@ -84,7 +84,7 @@ class VisualOdometry:
         self.px_ref, self.px_cur = featureTracking(
             self.last_frame, self.new_frame, self.px_ref)
         E, mask = cv2.findEssentialMat(
-            self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+            self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=10.0)
       
         _, R, t, mask = cv2.recoverPose(
             E, self.px_cur, self.px_ref, focal=self.focal, pp=self.pp)
