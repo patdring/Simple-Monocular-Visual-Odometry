@@ -6,13 +6,36 @@ import cv2
 import math
 from time import sleep
 
-def processFrame(frame):
-  orb = cv2.ORB_create(nfeatures=25)
-  keypoints, descriptors = orb.detectAndCompute(frame, None)
-  frame_with_kpts = cv2.drawKeypoints(frame, keypoints, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-  # Display the resulting frame 
-  cv2.imshow('Frame',frame_with_kpts)
-  sleep(1)
+STAGE_FIRST_FRAME = 0
+STAGE_DEFAULT_FRAME = 1
+
+class SMV:
+  def __init__(self):
+    self.orb = cv2.ORB_create(nfeatures=25)
+    self.frame_stage = STAGE_FIRST_FRAME
+    self.frame_ref = None
+    self.keypoints_ref = None 
+    self.descriptors_ref = None
+    self.keypoints_cur = None
+    self.descriptors_cur = None
+  
+  def processFirstFrame(self, frame):
+    self.keypoints_ref, self.descriptors_ref = self.orb.detectAndCompute(frame, None)
+    self.frame_ref = frame
+    sleep(1)
+
+  def processFrame(self, frame): 
+    self.keypoints_cur, self.descriptors_cur = self.orb.detectAndCompute(frame, None)
+    
+    frame_with_kpts_ref = cv2.drawKeypoints(self.frame_ref, self.keypoints_ref, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    cv2.imshow('Frame Ref.',frame_with_kpts_ref)
+
+    frame_with_kpts_cur = cv2.drawKeypoints(frame, self.keypoints_cur, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    cv2.imshow('Frame Cur.',frame_with_kpts_cur)
+    self.keypoints_ref = self.keypoints_cur 
+    self.descriptors_ref = self.descriptors_cur
+    frame_ref = frame
+    sleep(1)
 
 cap = cv2.VideoCapture('SampleVideos/harder_challenge_video.mp4')
 
@@ -36,6 +59,7 @@ print(fps)
 ring_buffer_size = fps
 i = 0
 
+smv = SMV()
 # Read until video is completed
 while(cap.isOpened()):
   # Capture not every frame
@@ -50,7 +74,11 @@ while(cap.isOpened()):
     # Our operations on the frame come here
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     if frame is not None:
-        processFrame(frame)      
+      if smv.frame_stage == STAGE_FIRST_FRAME:
+        smv.processFirstFrame(frame)
+        smv.frame_stage = STAGE_DEFAULT_FRAME
+      else:
+        smv.processFrame(frame)    
    
     # Press Q on keyboard to  exit
     if cv2.waitKey(25) & 0xFF == ord('q'):
