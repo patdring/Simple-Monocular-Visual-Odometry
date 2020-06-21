@@ -7,7 +7,9 @@ import math
 from time import sleep
 
 STAGE_FIRST_FRAME = 0
-STAGE_DEFAULT_FRAME = 1
+STAGE_SECOND_FRAME = 1
+STAGE_DEFAULT_FRAME = 2
+
 traj = np.zeros((1000,1000,3), dtype=np.uint8)
 
 def isRotationMatrix(R) :
@@ -50,60 +52,107 @@ class SMV:
     self.cam = cam
     self.focal = cam.fx
     self.pp = (cam.cx, cam.cy)
-    self.orb = cv2.ORB_create(nfeatures=25)
+    self.orb = cv2.ORB_create(nfeatures=2000)
     self.frame_stage = STAGE_FIRST_FRAME
     self.frame_ref = None
     self.keypoints_ref = None 
     self.descriptors_ref = None
     self.keypoints_cur = None
     self.descriptors_cur = None
+    self.cur_R = None
+    self.cur_t = None
   
   def processFirstFrame(self, frame):
     self.keypoints_ref, self.descriptors_ref = self.orb.detectAndCompute(frame, None)
     self.frame_ref = frame
-
     #sleep(1)
+
+  def processSecondFrame(self, frame):
+    self.keypoints_cur, self.descriptors_cur = self.orb.detectAndCompute(frame, None)
+
+    # Match features.
+    matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
+    matches = matcher.match( self.descriptors_cur,  self.descriptors_ref)
+
+    # Sort matches by score
+    matches.sort(key=lambda x: x.distance, reverse=False)
+
+    # Remove not so good matches
+    numGoodMatches = int(len(matches) * .1)
+    matches = matches[:numGoodMatches]
+
+    # Extract location of good matches
+    points1 = np.zeros((len(matches), 2), dtype=np.float32)
+    points2 = np.zeros((len(matches), 2), dtype=np.float32)
+
+    for i, match in enumerate(matches):
+      points1[i, :] = self.keypoints_cur[match.queryIdx].pt
+      points2[i, :] = self.keypoints_ref[match.trainIdx].pt
+
+    E, inliers = cv2.findEssentialMat(points1,
+                                      points2,
+                                      focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    
+    _, self.cur_R, self.cur_t, mask = cv2.recoverPose(E, points1, points2)
+    self.keypoints_ref = self.keypoints_cur 
+    self.descriptors_ref = self.descriptors_cur
+    self.frame_ref = frame
+
 
   def processFrame(self, frame): 
     self.keypoints_cur, self.descriptors_cur = self.orb.detectAndCompute(frame, None)
     frame_with_kpts_ref = cv2.drawKeypoints(self.frame_ref, self.keypoints_ref, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
     cv2.imshow('Frame Ref.',frame_with_kpts_ref)
-    frame_with_kpts_cur = cv2.drawKeypoints(frame, self.keypoints_cur, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    cv2.imshow('Frame Cur.',frame_with_kpts_cur)
+    #frame_with_kpts_cur = cv2.drawKeypoints(frame, self.keypoints_cur, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    #cv2.imshow('Frame Cur.',frame_with_kpts_cur)
 
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(self.descriptors_ref, self.descriptors_cur)
-    matches = sorted(matches, key=lambda x: x.distance)
+    # Match features.
+    matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
+    matches = matcher.match( self.descriptors_cur,  self.descriptors_ref)
 
-    src_pts = np.float32([self.keypoints_ref[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-    dst_pts = np.float32([self.keypoints_cur[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+    # Sort matches by score
+    matches.sort(key=lambda x: x.distance, reverse=False)
 
-    E, mask = cv2.findEssentialMat(dst_pts, src_pts, focal=1.0, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=10.0)   
-    _, R, t, mask = cv2.recoverPose(E, dst_pts, src_pts, focal=1.0, pp=self.pp)
+    # Remove not so good matches
+    numGoodMatches = int(len(matches) * .1)
+    matches = matches[:numGoodMatches]
 
-    t = t + R.dot(t)
-    R = R.dot(R)
+    # Extract location of good matches
+    points1 = np.zeros((len(matches), 2), dtype=np.float32)
+    points2 = np.zeros((len(matches), 2), dtype=np.float32)
 
-    x, y, z = t[0], t[1], t[2]
-    angles = rotationMatrixToEulerAngles(R)
+    for i, match in enumerate(matches):
+      points1[i, :] = self.keypoints_cur[match.queryIdx].pt
+      points2[i, :] = self.keypoints_ref[match.trainIdx].pt
+
+    E, inliers = cv2.findEssentialMat(points1,
+                                      points2,
+                                      focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+
+    _, R, t, mask = cv2.recoverPose(E, points1, points2)
+
+    self.cur_t = self.cur_t + self.cur_R.dot(t)
+    self.cur_R = R.dot(self.cur_R)
+
+    x, y, z = self.cur_t[0], self.cur_t[1], self.cur_t[2]
+    angles = rotationMatrixToEulerAngles(self.cur_R)
     n = angles[0]
     e = angles[1]
     d = angles[2]
     
-    draw_x, draw_y = int(x)+250, int(z*-1)+250
-    print(y)
-    #cv2.circle(traj, (draw_x,draw_y), 1, (0,0,255), 1)
-    #cv2.rectangle(traj, (10, 20), (600, 60), (0,0,0), -1)
-    #text = "Coordinates: x=%2fm y=%2fm z=%2fm '\n' n=%2fm e==%2fm d=%2fm "%(x,y,z,n,e,d)
-    #cv2.putText(traj, text, (20,40), cv2.FONT_HERSHEY_PLAIN, 1, (255,255,255), 1, 8)
-    #cv2.imshow('Trajectory', traj)
+    draw_x, draw_y = int(x)+500, int(z*-1)+500
+    cv2.circle(traj, (draw_x,draw_y), 1, (0,0,255), 1)
+    cv2.rectangle(traj, (10, 20), (600, 60), (0,0,0), -1)
+    text = "Coordinates: x=%2fm y=%2fm z=%2fm '\n' n=%2fm e==%2fm d=%2fm "%(x,y,z,n,e,d)
+    cv2.putText(traj, text, (20,40), cv2.FONT_HERSHEY_PLAIN, 1, (255,255,255), 1, 8)
+    cv2.imshow('Trajectory', traj)
 
     self.keypoints_ref = self.keypoints_cur 
     self.descriptors_ref = self.descriptors_cur
-    frame_ref = frame
+    self.frame_ref = frame
     #sleep(1)
 
-cap = cv2.VideoCapture('SampleVideos/harder_challenge_video.mp4')
+cap = cv2.VideoCapture('SampleVideos/challenge_video.mp4')
 
 # Check if camera opened successfully
 if (cap.isOpened()== False): 
@@ -122,7 +171,7 @@ else :
 
 print(fps)
 
-ring_buffer_size = 1
+ring_buffer_size = 25
 i = 0
 
 cam = Camera(1280.0, 720.0, 458.654, 457.296, 640.0, 360.0)
@@ -143,9 +192,13 @@ while(cap.isOpened()):
     if frame is not None:
       if smv.frame_stage == STAGE_FIRST_FRAME:
         smv.processFirstFrame(frame)
+        smv.frame_stage = STAGE_SECOND_FRAME
+      elif smv.frame_stage == STAGE_SECOND_FRAME:
+        smv.processSecondFrame(frame)
         smv.frame_stage = STAGE_DEFAULT_FRAME
       else:
-        smv.processFrame(frame)    
+         smv.processFrame(frame)
+
    
     # Press Q on keyboard to  exit
     if cv2.waitKey(25) & 0xFF == ord('q'):
